@@ -1,0 +1,23 @@
+name: ScappiWatch
+version: '1.0.0'
+main: dev.scappi.scappiwatch.ScappiWatch
+api-version: '1.21'
+author: Scappi
+description: Discord audit and alerts - joins, deaths, watched commands, TPS, anomalies, optional bot mode.
+website: https://github.com/ScappiDoo/ScappiWatch
+
+libraries:
+  - com.zaxxer:HikariCP:5.1.0
+  - com.h2database:h2:2.3.232
+  - net.dv8tion:JDA:5.0.0-beta.24
+
+commands:
+  scappiwatch:
+    description: ScappiWatch admin command (reload, test)
+    aliases: [sw, watch]
+    permission: scappiwatch.admin
+
+permissions:
+  scappiwatch.admin:
+    description: Allows /scappiwatch reload and test
+    default: op

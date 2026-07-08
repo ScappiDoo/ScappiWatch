@@ -1,0 +1,102 @@
+# ============================================================
+#  ScappiWatch - Discord audit & alerts
+#  Minimum setup: paste a Discord webhook URL into
+#  webhook.default-url below. Everything else works out of the
+#  box and can be tuned later.
+# ============================================================
+
+# Do not touch - used for automatic config migration.
+config-version: 1
+
+webhook:
+  # Every alert goes here unless a channel override matches below.
+  # Discord > channel settings > Integrations > Webhooks > New Webhook.
+  default-url: ""
+
+  # Optional per-alert routing. Any alert key can be given its own
+  # webhook URL (i.e. its own Discord channel). Keys not listed fall
+  # back to default-url. Alert keys emitted by other Scappi plugins
+  # (e.g. "punish.ban") can be routed here too - "punish" matches the
+  # whole family.
+  channels:
+    # joins: "https://discord.com/api/webhooks/..."
+    # deaths: ""
+    # commands: ""
+    # tps: ""
+    # anomaly: ""
+    # digest: ""
+
+alerts:
+  joins: true          # player joined
+  quits: true          # player left
+  first-joins: true    # first time on the server (separate, highlighted)
+  deaths: true         # death message + coordinates
+  server-start: true
+  server-stop: true
+
+  commands:
+    enabled: true
+    # Commands (with or without leading /) that trigger an alert when used.
+    watched:
+      - /op
+      - /deop
+      - /gamemode
+      - /ban
+      - /ban-ip
+      - /pardon
+      - /stop
+      - /whitelist
+      - /give
+
+  tps:
+    enabled: true
+    # Alert when the 1-minute TPS average drops below this.
+    threshold: 15.0
+    # Minimum seconds between two low-TPS alerts.
+    cooldown-seconds: 300
+
+  watchdog:
+    enabled: true
+    # Alert when the main thread has not ticked for this many seconds.
+    # The alert is sent from a separate thread, so it goes out even
+    # while the server is frozen.
+    stall-seconds: 10
+
+anomaly:
+  join-burst:
+    enabled: true
+    # Alert when at least this many BRAND-NEW accounts join...
+    accounts: 5
+    # ...within this many minutes.
+    window-minutes: 10
+
+  ip-country:
+    # Alert when a known account logs in from a country it has never
+    # used before. Requires an external geo-IP lookup, so it is off by
+    # default. Known countries are stored in an embedded database.
+    enabled: false
+    # %ip% is replaced with the player's address. The default free
+    # endpoint allows 45 requests/minute - fine for logins.
+    endpoint: "http://ip-api.com/json/%ip%?fields=status,countryCode"
+
+rate-limit:
+  # Max live alerts per alert key per minute. Extra alerts are counted
+  # and reported in the next alert's footer instead of spamming Discord.
+  per-alert-per-minute: 20
+
+digest:
+  # Digest mode: buffer the alert keys listed under 'include' and post
+  # one summary embed per interval instead of individual messages.
+  enabled: false
+  # hourly or daily
+  interval: hourly
+  include:
+    - joins
+    - quits
+    - deaths
+
+bot:
+  # Optional bot mode (needs a Discord bot token; webhooks alone do NOT).
+  # Adds /online, /tps and /whereis slash commands to your Discord.
+  enabled: false
+  token: "YOUR_TOKEN"
