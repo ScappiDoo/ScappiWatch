@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raid Watch</title>
+<style>
+  :root { --bg:#10151c; --panel:#1a222d; --ink:#e8edf3; --mute:#8b98a9; --att:#e5604d; --def:#4da3e5; --goal:#f2c14e; --ok:#58c27d; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f3f1ec; --panel:#fff; --ink:#1d232b; --mute:#5d6a7b; } }
+  * { box-sizing: border-box; } [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; padding:12px 16px; background:var(--panel); }
+  h1 { font-size:16px; margin:0; }
+  .grow { flex:1 1 260px; }
+  .bar { height:10px; border-radius:5px; background:#0003; overflow:hidden; } .bar i { display:block; height:100%; background:var(--goal); transition:width .5s; }
+  .score { display:flex; gap:16px; font-variant-numeric:tabular-nums; font-size:20px; font-weight:600; }
+  .att { color:var(--att); } .def { color:var(--def); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:12px; padding:12px 16px; }
+  @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  canvas { width:100%; aspect-ratio:4/3; background:var(--panel); border-radius:8px; display:block; }
+  aside { background:var(--panel); border-radius:8px; padding:12px; max-height:70vh; overflow:auto; }
+  aside h2 { font-size:13px; margin:0 0 8px; color:var(--mute); text-transform:uppercase; letter-spacing:.05em; }
+  li { list-style:none; padding:3px 0; border-bottom:1px solid #0002; } ul { margin:0; padding:0; }
+  .t { color:var(--mute); font-size:12px; }
+  .idle { padding:40px 16px; color:var(--mute); text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Raid Watch</h1>
+  <div class="grow"><div id="label" class="t">Waiting for a raid window…</div><div class="bar"><i id="fill" style="width:0"></i></div></div>
+  <div class="score"><span class="att" id="sa">0</span><span class="t">raiders</span><span class="def" id="sd">0</span><span class="t">defenders</span></div>
+  <div class="t" id="clock"></div>
+</header>
+<main>
+  <div><canvas id="map" width="960" height="720"></canvas><div class="idle" id="idle" hidden>No raid is running. The war map layer only appears during a raid window.</div></div>
+  <aside><h2>Wars</h2><ul id="wars"></ul><h2 style="margin-top:16px">Event feed</h2><ul id="feed"></ul></aside>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const ctx = $('map').getContext('2d');
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let state = null, lastRaid = null, audio = null;
+const fmtLocal = (ms) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const fmtServer = (ms, tz) => new Date(ms).toLocaleTimeString([], { timeZone: tz, hour: '2-digit', minute: '2-digit' }) + ' ' + tz.split('/')[1];
+const mmss = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+
+function horn() {
+  try {
+    audio ||= new AudioContext();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 130; g.gain.value = 0.08;
+    o.connect(g); g.connect(audio.destination); o.start(); o.stop(audio.currentTime + 1.2);
+  } catch {}
+}
+
+function draw(raid) {
+  const c = $('map'), W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  const pts = raid.zoneTiles.map((k) => k.split(',').map(Number));
+  if (raid.camp) pts.push([raid.camp.x, raid.camp.y]);
+  const x0 = Math.min(...pts.map((p) => p[0])) - 2, x1 = Math.max(...pts.map((p) => p[0])) + 3;
+  const y0 = Math.min(...pts.map((p) => p[1])) - 2, y1 = Math.max(...pts.map((p) => p[1])) + 3;
+  const s = Math.min(W / (x1 - x0), H / (y1 - y0));
+  const X = (x) => (x - x0) * s, Y = (y) => (y - y0) * s;
+  ctx.fillStyle = css('--goal') + '22';
+  for (const [x, y] of pts.slice(0, raid.zoneTiles.length)) ctx.fillRect(X(x), Y(y), s, s);
+  ctx.strokeStyle = css('--goal'); ctx.lineWidth = 2;
+  for (const k of raid.goalTiles) { const [x, y] = k.split(',').map(Number); ctx.strokeRect(X(x) + 1, Y(y) + 1, s - 2, s - 2); }
+  for (const p of raid.placements) { ctx.fillStyle = p.kind === 'web' ? '#ddd8' : '#4da3e588'; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), s * .4, 0, 7); ctx.fill(); }
+  for (const k of raid.caches) {
+    ctx.fillStyle = k.status === 'full' ? css('--ok') : k.status === 'emptied' ? '#777' : '#e5a04d';
+    ctx.fillRect(X(k.x) - s * .4, Y(k.y) - s * .4, s * .8, s * .8);
+    ctx.fillStyle = css('--ink'); ctx.font = '12px system-ui'; ctx.fillText(k.status.replace('_', ' '), X(k.x) - s, Y(k.y) - s * .6);
+  }
+  if (raid.camp) { ctx.fillStyle = css('--att'); ctx.beginPath(); ctx.moveTo(X(raid.camp.x), Y(raid.camp.y) - s); ctx.lineTo(X(raid.camp.x) + s, Y(raid.camp.y) - s * .5); ctx.lineTo(X(raid.camp.x), Y(raid.camp.y)); ctx.fill(); }
+  for (const p of raid.players) {
+    ctx.fillStyle = p.side === 'attacker' ? css('--att') : css('--def');
+    ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), s * .35, 0, 7); ctx.fill();
+    if (p.carrying) { ctx.strokeStyle = css('--goal'); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), s * .6, 0, 7); ctx.stroke(); }
+  }
+}
+
+function render() {
+  if (!state) return;
+  const raid = state.raids[0];
+  $('clock').textContent = 'Your time ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · server ' + fmtServer(state.now, state.timezone);
+  $('wars').innerHTML = state.wars.map((w) => `<li><b>${w.id}</b> ${w.attackerId} → ${w.defenderId} <span class="t">${w.status}, raids ${w.wins.attacker}-${w.wins.defender}${w.nextRaid ? '<br>next: ' + fmtLocal(w.nextRaid.startMs) + ' (your time)' : ''}</span></li>`).join('') || '<li class="t">No wars.</li>';
+  $('idle').hidden = !!raid; $('map').hidden = !raid;
+  if (!raid) { ctx.clearRect(0, 0, 960, 720); $('label').textContent = 'Waiting for a raid window…'; $('fill').style.width = '0'; return; }
+  const total = raid.endMs - raid.startMs;
+  $('label').textContent = `Raid ${raid.raidId} · ${mmss(raid.msLeft)} left · loot delivered ${raid.stats.delivered} · defeats ${raid.stats.kills.attacker}/${raid.stats.kills.defender}`;
+  $('fill').style.width = (100 * raid.msLeft / total) + '%';
+  $('sa').textContent = raid.score.attacker; $('sd').textContent = raid.score.defender;
+  draw(raid);
+}
+
+async function pollFeed() {
+  const r = await (await fetch('/api/events')).json();
+  $('feed').innerHTML = r.slice().reverse().map((e) => `<li><span class="t">${new Date(e.ts).toLocaleTimeString()}</span> ${e.type.replaceAll('_', ' ')} ${e.raidId || e.warId || ''}</li>`).join('');
+}
+
+const es = new EventSource('/stream');
+es.onmessage = (m) => {
+  const prev = state?.raids[0]?.raidId; state = JSON.parse(m.data);
+  const cur = state.raids[0]?.raidId;
+  if (cur && cur !== prev) horn();            // war horn when a raid starts
+  if (!cur && prev) horn();                   // and when it ends
+  render();
+};
+setInterval(pollFeed, 3000); pollFeed();
+</script>
+</body>
+</html>
