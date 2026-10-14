@@ -1,6 +1,6 @@
 # Test report (section 13)
 
-Run: `npm test` (49 tests, all passing) and `node scripts/load.js`.
+Run: `npm test` (62 tests, all passing) and `node scripts/load.js`.
 "Automated" means covered by a test in `test/`. Items that need real players or networks are marked as such.
 
 | Section 13 item | Result | Where |
@@ -29,8 +29,24 @@ While writing it the detector correctly flagged a perfectly regular click rhythm
 
 ## Load test
 `node scripts/load.js`: 50 clients (25 per side), 12,000 ticks (10 minutes), all sending through the real guard.
-Result on this machine: **0.39 ms average per tick, 12.8 ms worst, against a 50 ms budget**, 0 flags.
-*Limit:* in-memory, no network or database cost.
+Result on this machine (in memory, about 2 messages a second per client): **about 0.4 ms average per tick against a 50 ms budget**, 0 flags.
+*Limit:* in-memory here; the database figure is below.
+
+## Database and WebSocket (added after the first version)
+| Check | Where |
+| --- | --- |
+| Events and state survive a restart; chain verified on load | `persist.test.js` |
+| A tampered database is refused at start | `persist.test.js` |
+| A running raid is rebuilt from the log, everyone is disconnected, the window ends on time, the resumed raid still replays | `persist.test.js` |
+| Storage locks re-asserted; retention prune survives a restart; flags, undo proposals and tickets restored | `persist.test.js` |
+| Auth refused for bad token, junk, timeout, second connection; binary, oversized, malformed and flooding frames handled; origin check | `ws.test.js` |
+| A raid over real sockets: join, camp, state push to both sides, server-measured ping, forged nonce refused, move is a direction only, closing the socket is a disconnect | `ws.test.js` |
+| Real process: start, connect, restart on the same file reports "Resumed saved state" | run by hand, not automated |
+
+Load with SQLite (`DB_PATH=... node scripts/load.js`), 50 clients, 10 minutes:
+about 2 messages/s each: **0.39 ms average, 19 ms worst** per tick, 18 MB written;
+5 messages/s each: **0.86 ms average, 30 ms worst**, 90 MB. The worst case is a batch write, so it is the number to watch against the 50 ms budget.
+*Limit:* in-process, not over sockets, and on this machine's disk.
 
 ## Not run
 * **Balance test** (10+ raids with real players, raiders winning 40-60%): needs players. The scoring numbers are untuned starting points.
