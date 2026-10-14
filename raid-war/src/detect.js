@@ -200,5 +200,18 @@ export class Detector {
     return { ok: true };
   }
 
+  /** Rebuild the review queue from the log after a restart. */
+  restoreFromLog(log) {
+    for (const e of log.query({ type: 'anticheat_flag' })) {
+      const d = e.data;
+      this.queue.push({ id: d.id, kind: d.kind, accountId: d.accountId, raidId: e.raidId, details: d.details, status: 'open', createdAt: e.ts, evidence: d.evidence, alertOnly: d.alertOnly });
+      this.nextFlag = Math.max(this.nextFlag, Number(d.id.slice(1)) + 1);
+    }
+    for (const e of log.query({ type: 'anticheat_review' })) {
+      const f = this.queue.find((x) => x.id === e.data.flagId);
+      if (f) f.status = e.data.status;
+    }
+  }
+
   open() { return this.queue.filter((f) => f.status === 'open'); }
 }

@@ -10,7 +10,8 @@ const deepFreeze = (o) => {
  * only way events leave is retention pruning, which keeps the chain verifiable.
  */
 export class EventLog {
-  constructor({ clock = Date.now, retentionMs = 30 * 86400000 } = {}) {
+  constructor({ clock = Date.now, retentionMs = 30 * 86400000, sink = null } = {}) {
+    this.sink = sink; // called with every appended event (the database writer)
     this.clock = clock;
     this.retentionMs = retentionMs;
     this.events = [];
@@ -28,8 +29,19 @@ export class EventLog {
     const ev = { seq: this.nextSeq++, ts: this.clock(), type, tick, warId, raidId, actor, data: structuredClone(data), prev };
     ev.hash = createHash('sha256').update(JSON.stringify(ev)).digest('hex');
     this.events.push(deepFreeze(ev));
+    this.sink?.(ev);
     for (const fn of this.listeners) fn(ev);
     return ev;
+  }
+
+  /** Load events saved by an earlier run. The chain is checked before anything else runs. */
+  restore(events, anchor = 'GENESIS') {
+    this.anchor = anchor;
+    this.events = events.map((e) => deepFreeze({
+      seq: e.seq, ts: e.ts, type: e.type, tick: e.tick, warId: e.warId, raidId: e.raidId, actor: e.actor, data: e.data, prev: e.prev, hash: e.hash,
+    }));
+    this.nextSeq = this.events.length ? this.events.at(-1).seq + 1 : 1;
+    if (!this.verify()) throw new Error('event log failed its hash-chain check: refusing to start on tampered or corrupt data');
   }
 
   query({ warId, raidId, type, actor } = {}) {
@@ -52,11 +64,14 @@ export class EventLog {
   }
 
   prune(now = this.clock()) {
-    let n = 0;
+    let n = 0, lastSeq = 0;
     while (this.events.length && now - this.events[0].ts > this.retentionMs) {
-      this.anchor = this.events.shift().hash;
+      const e = this.events.shift();
+      this.anchor = e.hash;
+      lastSeq = e.seq;
       n++;
     }
+    if (n) this.onPrune?.(lastSeq, this.anchor);
     return n;
   }
 }

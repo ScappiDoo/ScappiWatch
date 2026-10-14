@@ -143,6 +143,7 @@ export class Raid {
   on_sys_disconnect(p, i, id) {
     this.accept(id, i);
     p.connected = false;
+    p.dx = p.dy = 0; // a disconnected player does not keep walking
     if (p.state === 'alive' && this.tick - p.lastCombatTick <= (this.cfg.combat.fightSeconds * 1000) / this.tickMs) {
       this.defeat(p, p.lastAttackerId, 'disconnect_in_fight');
     }

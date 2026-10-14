@@ -39,6 +39,7 @@ export class Staff {
     // Everything on the war's clock moves later by the time it was paused.
     war.firstRaidAt += paused;
     if (war.slot) { war.slot.startMs += paused; war.slot.endMs += paused; war.slot.lockAt += paused; }
+    war.shiftMs = (war.shiftMs || 0) + paused; // kept so a restart rebuilds the raid on the same clock
     const raid = war.raidId && this.m.raids.get(war.raidId);
     if (raid) { raid.setup.startMs += paused; raid.setup.endMs += paused; }
     this.m.emit('staff_resume', { warId, actor: staffId, data: { pausedMs: paused } });
@@ -91,16 +92,24 @@ export class Staff {
     return { ok: true, status: 'undone' };
   }
 
+  /** Rebuild pending undo proposals from the log after a restart. */
+  restoreFromLog(log) {
+    for (const e of log.events) {
+      if (e.type === 'staff_undo_proposed') this.undoProposals.set(e.warId, { by: e.actor, reason: e.data.reason });
+      if (e.type === 'war_result_undone') this.undoProposals.delete(e.warId);
+    }
+  }
+
   // ---- disputes -------------------------------------------------------------------------
 
   openTicket({ accountId, raidId, text }, now = this.clock()) {
-    const raid = this.m.raids.get(raidId);
-    const end = raid && this.m.log.query({ raidId, type: 'raid_end' })[0];
-    if (!raid || !end) return { ok: false, reason: 'raid_not_finished' };
+    const start = this.m.log.query({ raidId, type: 'raid_start' })[0];
+    const end = this.m.log.query({ raidId, type: 'raid_end' })[0];
+    if (!start || !end) return { ok: false, reason: 'raid_not_finished' };
     if (now - end.ts > this.m.cfg.retention.disputeHours * HOUR) return { ok: false, reason: 'dispute_window_closed' };
     const t = { id: `T${this.m.tickets.length + 1}`, accountId, raidId, text, status: 'open', openedAt: now };
     this.m.tickets.push(t);
-    this.m.emit('dispute_opened', { raidId, warId: raid.setup.warId, actor: accountId, data: { ticket: t.id, text } });
+    this.m.emit('dispute_opened', { raidId, warId: start.warId, actor: accountId, data: { ticket: t.id, text } });
     return { ok: true, ticket: t.id };
   }
 

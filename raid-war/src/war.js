@@ -1,4 +1,5 @@
 import { Raid } from './raid.js';
+import { resumeRaid } from './replay.js';
 import { validateGoal, validateShrink } from './land.js';
 import { connected, parseTile, tk, NEIGHBORS } from './world.js';
 import { DAY, HOUR, addDays, dateKey, nextWindow, windowsOn } from './time.js';
@@ -42,6 +43,24 @@ export class WarManager {
   emit(type, { warId = null, raidId = null, actor = 'system', data = {} } = {}) {
     this.log.append(type, { warId, raidId, actor, data });
     this.hooks.notify?.(type, { warId, raidId, ...data });
+  }
+
+  /**
+   * After a restart: rebuild running raids from the log and disconnect everyone, so
+   * they reconnect (and anyone caught mid-fight is treated like any other disconnect).
+   * Storage locks are re-asserted for wars that are inside their lock period.
+   */
+  resumeRaids(now = this.clock()) {
+    for (const war of this.wars.values()) {
+      if (war.status === 'ended') continue;
+      if (war.slot?.locked || war.raidId) this.hooks.lockStorage?.(war.defenderId, true);
+      if (!war.raidId) continue;
+      const raid = resumeRaid(this.log, war.raidId, this.cfg, { hooks: this.hooks, shiftMs: war.shiftMs || 0 });
+      if (!raid) { this.cancelRaid(war, 'restore_inconsistent', now); war.raidId = null; continue; }
+      this.raids.set(war.raidId, raid);
+      this.emit('server_restart', { warId: war.id, raidId: war.raidId, data: { tick: raid.tick } });
+      for (const p of raid.players.values()) if (p.connected) raid.enqueue(p.id, { t: 'sys_disconnect' }, true);
+    }
   }
 
   // ---- queries ------------------------------------------------------------------

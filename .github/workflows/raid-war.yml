@@ -1,0 +1,23 @@
+name: raid-war tests
+
+on:
+  push:
+    paths: ['raid-war/**', '.github/workflows/raid-war.yml']
+  pull_request:
+    paths: ['raid-war/**', '.github/workflows/raid-war.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: raid-war
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: raid-war/package-lock.json
+      - run: npm ci
+      - run: npm test

@@ -1,13 +1,41 @@
 # Raid & War System
 
 A fair, lore-based raid and war module for the browser nations game, built from the
-"Raid & War System: Build Prompt (HTML Game)". Zero dependencies, Node 20+ (tested on 22).
+"Raid & War System: Build Prompt (HTML Game)". One dependency (`ws`) plus Node's built-in SQLite. Needs Node 22.13 or newer.
 
 ```
-npm test                       # 49 tests: rules, raid sim, guard, detection, replay, spectator data
-node scripts/load.js           # 50 simulated clients through the gateway, per-tick timing
-PORT=8080 SPEED=30 node scripts/demo.js   # scripted bots + spectator page on a fast clock
+npm install
+npm test                       # 62 tests: rules, raid sim, guard, detection, replay, database, WebSocket
+TOKEN_SECRET=<16+ chars> npm start -- --demo   # real server: WebSocket /ws, spectator page /, SQLite file
+TOKEN_SECRET=<same> node scripts/issue-token.js v1   # a session token for a test client
+node scripts/load.js           # 50 simulated clients through the gateway (DB_PATH=... adds SQLite)
+PORT=8080 SPEED=30 node scripts/demo.js   # scripted bots + spectator page on a fast clock, no network clients
 ```
+
+The client protocol is in `docs/protocol.md`.
+
+## Running it
+
+| Variable | Meaning |
+| --- | --- |
+| `TOKEN_SECRET` | Required, 16+ characters. Signs session tokens. Your login service mints tokens with the same secret (`Guard.issueToken`) |
+| `PORT`, `DB_PATH` | Default `8080` and `raidwar.db` |
+| `ALLOWED_ORIGINS` | Comma list. When set, browsers on other sites cannot open the socket |
+| `TRUST_PROXY=1` | Use `X-Forwarded-For` for the player's IP (needed for the same-IP signal behind a proxy) |
+| `DISCORD_WEBHOOK_URL` | Posts the raid feed; leave unset to turn it off |
+| `STAFF_IDS` | Comma list of accounts allowed to use the staff API |
+| `--demo` | Seeds two test nations if the database is empty. A real game seeds from its own data instead |
+
+The server speaks plain `ws://`. Put it behind a TLS-terminating proxy (nginx, Caddy) for `wss://`.
+Back up the database with SQLite's `.backup` command while it runs, or copy the file when stopped.
+
+## Database and restarts
+
+SQLite via Node's `node:sqlite`. Two things are stored: the **event log** (one row per event, hash chain intact) and a **state snapshot** of nations, wars and tickets, saved whenever something other than raid-floor traffic happens. Events are written in batches every 100 ms inside one transaction, so a crash loses at most the last 100 ms.
+
+On start the server checks the whole hash chain and **refuses to start on a tampered or corrupt log**. A raid that was running is not stored as state: it is rebuilt by replaying its logged inputs, the same replay used for disputes. Then everyone in it is disconnected (logged as `server_restart`), so they reconnect, and anyone caught mid-fight is handled like any other disconnect. The window still ends on schedule. Storage locks are re-asserted. Anti-cheat flags and pending two-person undos are rebuilt from the log. Presence is not saved: after a restart a player must reconnect, and "connected before the window began" counts from that reconnect.
+
+Size: at 50 players sending about 2 messages a second each, a raid logs roughly 6,000 events a minute (about 1.8 MB), so around 160 MB for a full 90 minute window. Retention (30 days) prunes old rows in the database too.
 
 ## Design check (deliverable 1)
 
@@ -42,7 +70,10 @@ guess at your real code, the module talks to the game through small surfaces, an
 | `src/detect.js` | Raid Guard part 2: evidence buffer, ping nonce, hit-validation flags, bot, multi-account and reject-rate signals. Flags only |
 | `src/replay.js` | Rebuilds a raid from the log and compares the final state hash |
 | `src/staff.js` | Pause, end, score back, two-person undo, dispute tickets. No inventory or log access |
-| `src/gateway.js` | Transport-agnostic connection handling (plug a WebSocket server into it) |
+| `src/gateway.js` | Transport-agnostic connection handling |
+| `src/ws-server.js` | WebSocket transport: auth, frame limits, flood cut-off, ping/pong, 10 Hz state push |
+| `src/db.js`, `src/persist.js` | SQLite event store and the state snapshot |
+| `src/app.js`, `src/main.js` | Wires it all together; the real entry point |
 | `src/discord.js`, `src/public.js`, `src/server.js`, `public/spectator.html` | Discord feed, safe public data, spectator page with war-map layer and HUD |
 
 ## How the fairness rules are enforced
@@ -68,8 +99,10 @@ All are config or one-line changes; say if you want any of them different.
 
 ## Not done (be aware before launch)
 
-* **No WebSocket server, database or real client.** `Gateway` is the seam for the first; the log and state are in memory. At 50 players the log grows by about 30k events a minute, so it needs batched writes to a real store.
-* **Staff review screen** (build order step 6): the flag queue and evidence are available through `Detector`, but there is no UI and no replay viewer.
+* **No real game client.** The server and protocol are done and tested with scripted clients; the browser client that sends inputs and draws `state` messages is still to build (the spectator page is a starting point for the drawing).
+* **No staff HTTP API.** `Staff` and the flag queue work in code (and are restored after a restart), but nothing exposes them to a screen yet. `STAFF_IDS` is wired in but unused until that exists.
+* **No login.** The server trusts tokens signed with `TOKEN_SECRET`; your login system must mint them.
+* **Staff review screen** (build order step 6): there is no UI and no replay viewer.
 * **Silver loot mode** (section 6 optional) and **capital-in-war-goal** question are left out. Capture of players is left out on purpose, as the prompt says.
-* **Balance test, real lag test and real-player load test** need people and real networks. See `docs/test-report.md` for exactly what was and was not covered.
+* **Balance test, real lag test and a load test over real sockets** need people and real networks. `scripts/load.js` drives the gateway in-process. See `docs/test-report.md` for exactly what was and was not covered.
 * The line-of-sight and movement collision use a blocked-tile set; plug in your real terrain.

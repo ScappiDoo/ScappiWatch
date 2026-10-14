@@ -5,6 +5,7 @@ import { WarManager, Presence } from '../src/war.js';
 import { Detector } from '../src/detect.js';
 import { Guard } from '../src/guard.js';
 import { Staff } from '../src/staff.js';
+import { seedDemoWorld } from '../src/demo-world.js';
 
 export const T0 = Date.UTC(2026, 9, 5, 10, 0, 0); // 5 Oct 2026, 12:00 Copenhagen
 export const GOAL = Array.from({ length: 10 }, (_, i) => `40,${40 + i}`); // the western edge strip, touching vik
@@ -15,16 +16,7 @@ export function makeEnv(overrides = {}, { startAt = T0, homeWindow = 0 } = {}) {
   const now = () => clock.t;
   const log = new EventLog({ clock: now, retentionMs: cfg.retention.logDays * 86400000 });
   const world = new World({ cfg, clock: now, width: 128, height: 128 });
-  const grid = (x0, x1, y0, y1) => { const t = []; for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) t.push([x, y]); return t; };
-  world.addNation({ id: 'vik', tiles: grid(20, 39, 40, 49), capital: [20, 40], treasury: 1000, spawns: [{ x: 21.5, y: 45.5 }] });
-  world.addNation({
-    id: 'sax', tiles: grid(40, 59, 40, 49), capital: [59, 49], treasury: 2000, homeWindow,
-    spawns: [{ x: 58.5, y: 45.5 }, { x: 58.5, y: 46.5 }, { x: 58.5, y: 44.5 }],
-  });
-  for (let i = 1; i <= 5; i++) {
-    world.addMember('vik', { id: `v${i}`, rank: i === 1 ? 'leader' : 'member', ip: `10.0.0.${i}` });
-    world.addMember('sax', { id: `s${i}`, rank: i === 1 ? 'leader' : 'member', ip: `10.0.1.${i}` });
-  }
+  seedDemoWorld(world, { homeWindow });
   const notes = [];
   const presence = new Presence();
   const detector = new Detector({ cfg, log, clock: now });
